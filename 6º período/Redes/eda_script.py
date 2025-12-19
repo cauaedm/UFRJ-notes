@@ -9,24 +9,23 @@ def parse_rtts(rtt_str):
         return []
 
 def main():
-    print("Loading data...")
+    print("Carregando dados...")
     df = pd.read_csv('train.csv')
     
-    print(f"Dataset Shape: {df.shape}")
-    print("\nColumn Info:")
+    print(f"Shape: {df.shape}")
+    print("\nInfo:")
     print(df.info())
     
-    print("\nTarget Distribution (route_changed):")
+    print("\nDistribuição do target:")
     print(df['route_changed'].value_counts(normalize=True))
     
-    print("\nMissing Values:")
+    print("\nValores faltantes:")
     print(df.isnull().sum())
     
-    print("\nNumerical Stats:")
+    print("\nEstatísticas:")
     print(df.describe())
     
-    # Sample parse of all_rtts
-    print("\nParsing 'all_rtts' sample...")
+    print("\nParsing 'all_rtts'...")
     df['rtts_parsed'] = df['all_rtts'].apply(parse_rtts)
     df['avg_rtt'] = df['rtts_parsed'].apply(lambda x: np.mean(x) if x else np.nan)
     print(df[['all_rtts', 'avg_rtt']].head())

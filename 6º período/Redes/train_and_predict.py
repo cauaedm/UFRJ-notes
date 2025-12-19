@@ -9,35 +9,23 @@ from data_loader import load_data, parse_rtts_column
 from feature_engineering import calculate_rtt_stats, add_temporal_features
 
 def prepare_chunk(df_raw, is_train=True):
-    """
-    Process a chunk of data.
-    """
-    # 1. Parse
+    # Pipeline completo de feature engineering em um chunk de dados
     df = parse_rtts_column(df_raw)
-    
-    # 2. Stats
     df = calculate_rtt_stats(df)
-    
-    # Drop raw to save RAM
     df.drop(columns=['all_rtts', 'rtts_parsed'], inplace=True, errors='ignore')
-    
-    # 3. Temporal Features
-    # Note: On a chunk, this only sees local history. 
-    # For training (single large chunk), it's fine.
-    # For testing (batched), we accept minor boundary loss.
     df = add_temporal_features(df)
     
-    # Cast residuals to float32
+    # Converte para float32 para economizar memória
     float_cols = df.select_dtypes(include=['float64']).columns
     df[float_cols] = df[float_cols].astype('float32')
     
     return df
 
 def main():
-    print("=== Training Phase (Low Memory) ===")
-    # Train on 500k rows (Robust, fits in RAM)
-    TRAIN_SIZE = 500000 
-    print(f"Loading first {TRAIN_SIZE} rows...")
+    # Treina modelo com subset dos dados e aplica em chunks no teste
+    print("=== Fase de Treinamento ===")
+    TRAIN_SIZE = 500000
+    print(f"Carregando primeiras {TRAIN_SIZE} linhas...")
     
     df_train_raw = load_data('train.csv', sample_size=TRAIN_SIZE)
     df_train = prepare_chunk(df_train_raw, is_train=True)
@@ -50,7 +38,6 @@ def main():
     ]
     target = 'route_changed'
     
-    # Drop NaNs for training
     df_train = df_train.dropna(subset=features + [target])
     
     X = df_train[features]
@@ -58,58 +45,51 @@ def main():
     
     X_train, X_val, y_train, y_val = train_test_split(X, y, test_size=0.1, random_state=42, stratify=y)
     
-    print(f"Training LightGBM on {len(X_train)} samples...")
+    print(f"Treinando LightGBM com {len(X_train)} amostras...")
     clf = lgb.LGBMClassifier(
-        n_estimators=300, 
-        learning_rate=0.03, 
-        num_leaves=31, 
-        random_state=42, 
-        n_jobs=-1, 
+        n_estimators=300,
+        learning_rate=0.03,
+        num_leaves=31,
+        random_state=42,
+        n_jobs=-1,
         class_weight='balanced',
         verbose=-1
     )
     
     clf.fit(X_train, y_train, eval_set=[(X_val, y_val)], callbacks=[lgb.early_stopping(20)])
     
-    print("\nValidation Report:")
+    print("\nRelatório de Validação:")
     val_pred = clf.predict(X_val)
     print(classification_report(y_val, val_pred))
     
-    # Free Train Memory
+    # Libera memória antes da inferência
     del df_train_raw, df_train, X, y, X_train, X_val, y_train, y_val
     gc.collect()
     
-    print("\n=== Inference Phase (Chunked) ===")
+    print("\n=== Fase de Inferência ===")
     
     output_file = 'my_submission.csv'
-    # Write header
     with open(output_file, 'w') as f:
         f.write('tr_id,route_changed\n')
     
-    CHUNK_SIZE = 200000 # 200k rows per batch (safe)
-    
-    # Use pandas chunksize
+    # Processa teste em chunks para não estourar memória
+    CHUNK_SIZE = 200000
     chunks = pd.read_csv('test.csv', chunksize=CHUNK_SIZE)
     
     for i, chunk_raw in enumerate(chunks):
         if i % 2 == 0:
-            print(f"Processing Test Chunk {i}...")
+            print(f"Processando chunk {i}...")
             
-        # Process feature engineering on chunk
         chunk_proc = prepare_chunk(chunk_raw, is_train=False)
-        
-        # Predict
         preds = clf.predict(chunk_proc[features])
         
-        # Save
         res = pd.DataFrame({'tr_id': chunk_proc['tr_id'], 'route_changed': preds})
         res.to_csv(output_file, mode='a', header=False, index=False)
         
-        # Cleanup
         del chunk_raw, chunk_proc, preds, res
         gc.collect()
         
-    print(f"Submission saved to {output_file}")
+    print(f"Submissão salva em {output_file}")
 
 if __name__ == "__main__":
     main()
